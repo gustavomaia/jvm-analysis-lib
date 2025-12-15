@@ -71,7 +71,7 @@ public class JfrParser {
     /**
      * Extract CPU profiling data from execution samples.
      */
-    private JfrAnalysisData.CpuProfile extractCpuProfile(IItemCollection events) {
+    JfrAnalysisData.CpuProfile extractCpuProfile(IItemCollection events) {
         logger.info("Extracting CPU profile");
 
         JfrAnalysisData.CpuProfile profile = new JfrAnalysisData.CpuProfile();
@@ -136,7 +136,7 @@ public class JfrParser {
     /**
      * Extract memory allocation profile.
      */
-    private JfrAnalysisData.MemoryProfile extractMemoryProfile(IItemCollection events) {
+    JfrAnalysisData.MemoryProfile extractMemoryProfile(IItemCollection events) {
         logger.info("Extracting memory profile");
 
         JfrAnalysisData.MemoryProfile profile = new JfrAnalysisData.MemoryProfile();
@@ -215,7 +215,7 @@ public class JfrParser {
     /**
      * Extract GC statistics.
      */
-    private JfrAnalysisData.GcProfile extractGcProfile(IItemCollection events) {
+    JfrAnalysisData.GcProfile extractGcProfile(IItemCollection events) {
         logger.info("Extracting GC profile");
 
         JfrAnalysisData.GcProfile profile = new JfrAnalysisData.GcProfile();
@@ -265,7 +265,7 @@ public class JfrParser {
     /**
      * Extract thread-related issues.
      */
-    private JfrAnalysisData.ThreadProfile extractThreadProfile(IItemCollection events) {
+    JfrAnalysisData.ThreadProfile extractThreadProfile(IItemCollection events) {
         logger.info("Extracting thread profile");
 
         JfrAnalysisData.ThreadProfile profile = new JfrAnalysisData.ThreadProfile();

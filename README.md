@@ -1,18 +1,44 @@
 # JVM Analysis Library
 
-Automated JVM performance analysis using Java Flight Recorder (JFR) dumps and Claude AI for intelligent optimization recommendations.
+Automated JVM performance analysis using Java Flight Recorder (JFR) and Claude AI. Perfect for production Kubernetes environments with distributed services.
 
 ## Features
 
-- ✅ **Automated JFR Recording** - In-app recording with configurable duration and settings
-- ✅ **Comprehensive Analysis** - CPU profiling, memory allocation, GC stats, thread issues
-- ✅ **AI-Powered Insights** - Claude AI generates actionable optimization recommendations
-- ✅ **Multi-Region Support** - Kubernetes leader election for per-region collection
-- ✅ **Source Code Integration** - Fetches code via Git API or bundled sources
-- ✅ **Async Processing** - Full CompletableFuture-based pipeline for efficiency
-- ✅ **Cloud Storage** - Automatic upload to Google Cloud Storage
-- ✅ **Slack Integration** - Formatted reports sent directly to Slack
-- ✅ **Method Whitelisting** - Focus analysis on your code, exclude dependencies
+- 📊 **JFR Recording** - Capture CPU, memory, GC, and thread data from running JVMs
+- ⚡ **Async Processing** - Full CompletableFuture-based pipeline for non-blocking operations
+- 🤖 **AI Analysis** - Claude AI analyzes JFR data and provides actionable optimization recommendations
+- ☁️ **GCS Integration** - Automatic upload of JFR dumps to Google Cloud Storage
+- 💬 **Slack Notifications** - Get reports delivered to Slack channels
+- 🎯 **Method Whitelisting** - Focus analysis on your application code, filter out framework noise
+- 🔄 **Multi-Region Support** - Analyze pods across different regions in parallel
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Your Java Application                        │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │         JvmAnalysisPipeline (Async)                      │   │
+│  │                                                           │   │
+│  │  1. Record JFR ────────────────────> JfrCollector        │   │
+│  │         │                                                 │   │
+│  │         ▼                                                 │   │
+│  │  2. Upload to GCS ──────────────────> GcsStorage         │   │
+│  │         │                                                 │   │
+│  │         ▼                                                 │   │
+│  │  3. Parse JFR (parallel) ────────────> AsyncJfrParser    │   │
+│  │         │                        ┌───> CPU Profile       │   │
+│  │         │                        ├───> Memory Profile    │   │
+│  │         │                        ├───> GC Profile        │   │
+│  │         │                        └───> Thread Profile    │   │
+│  │         ▼                                                 │   │
+│  │  4. Analyze with Claude ─────────> JvmOptimizationAnalyzer │  │
+│  │         │                                                 │   │
+│  │         ▼                                                 │   │
+│  │  5. Notify Slack ────────────────> SlackNotifier         │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
@@ -26,453 +52,289 @@ Automated JVM performance analysis using Java Flight Recorder (JFR) dumps and Cl
 </dependency>
 ```
 
-### 2. Configure Environment Variables
-
-```bash
-# Claude AI
-export CLAUDE_API_KEY="your-claude-api-key"
-
-# Google Cloud Storage
-export GCS_BUCKET="your-jfr-dumps-bucket"
-export GCP_PROJECT_ID="your-project-id"
-
-# Slack
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK"
-
-# GitHub (for source code fetching)
-export GITHUB_TOKEN="ghp_yourtoken"
-export GITHUB_REPO="yourorg/yourrepo"
-
-# Kubernetes (set via downward API in deployment)
-export POD_NAME="myapp-abc123"
-export POD_NAMESPACE="production"
-export REGION="us-east1"
-
-# Pod Selection Strategy
-export JFR_SELECTION_STRATEGY="leader-election"  # or "statefulset", "explicit", "pattern"
-```
-
-### 3. Basic Usage
+### 2. Basic Usage
 
 ```java
-import com.jvmanalysis.JvmAnalysisOrchestrator;
-import com.jvmanalysis.config.JvmAnalysisConfig;
+import com.jvmanalysis.JvmAnalysisPipeline;
+import java.util.Set;
+import java.time.Duration;
 
-public class MyApplication {
+public class MyApp {
     public static void main(String[] args) throws Exception {
-        // Configure
-        JvmAnalysisConfig config = new JvmAnalysisConfig();
+        // Build the pipeline
+        JvmAnalysisPipeline pipeline = new JvmAnalysisPipeline.Builder()
+                .claudeApiKey(System.getenv("CLAUDE_API_KEY"))
+                .slackWebhook(System.getenv("SLACK_WEBHOOK_URL"))
+                .gcsBucket("my-jfr-dumps")
+                .gcsProjectId("my-gcp-project")
+                .packageWhitelist(Set.of("com.mycompany")) // Only analyze your code
+                .recordingDuration(Duration.ofMinutes(1))
+                .build();
 
-        // Claude
-        JvmAnalysisConfig.ClaudeConfig claude = new JvmAnalysisConfig.ClaudeConfig();
-        claude.setApiKey(System.getenv("CLAUDE_API_KEY"));
-        config.setClaude(claude);
+        // Execute async analysis
+        pipeline.executeAsync()
+                .thenAccept(report -> {
+                    System.out.println("Analysis complete!");
+                    System.out.println("Report: " + report.getClaudeAnalysis());
+                })
+                .exceptionally(error -> {
+                    System.err.println("Analysis failed: " + error.getMessage());
+                    return null;
+                });
 
-        // GCS
-        JvmAnalysisConfig.GcsConfig gcs = new JvmAnalysisConfig.GcsConfig();
-        gcs.setBucketName(System.getenv("GCS_BUCKET"));
-        gcs.setProjectId(System.getenv("GCP_PROJECT_ID"));
-        config.setGcs(gcs);
-
-        // Slack
-        JvmAnalysisConfig.SlackConfig slack = new JvmAnalysisConfig.SlackConfig();
-        slack.setWebhookUrl(System.getenv("SLACK_WEBHOOK_URL"));
-        config.setSlack(slack);
-
-        // Analysis - focus on your code
-        JvmAnalysisConfig.AnalysisConfig analysis = new JvmAnalysisConfig.AnalysisConfig();
-        analysis.getPackageWhitelist().add("com.yourcompany");
-        config.setAnalysis(analysis);
-
-        // Create orchestrator
-        JvmAnalysisOrchestrator orchestrator = new JvmAnalysisOrchestrator(config);
-
-        // Run analysis (async)
-        orchestrator.runAnalysisPipeline()
-            .thenAccept(result -> {
-                System.out.println("Analysis complete! " + result.getReportUrl());
-            });
+        // Keep app running...
     }
 }
 ```
 
-## Pod Selection Strategies
+### 3. Scheduled Analysis
 
-Choose how to select which pods collect JFR dumps:
+For continuous monitoring, run analysis on a schedule:
 
-### 1. Leader Election (Recommended for Production)
+```java
+JvmAnalysisPipeline pipeline = new JvmAnalysisPipeline.Builder()
+        .claudeApiKey(System.getenv("CLAUDE_API_KEY"))
+        .slackWebhook(System.getenv("SLACK_WEBHOOK_URL"))
+        .gcsBucket("my-jfr-dumps")
+        .gcsProjectId("my-gcp-project")
+        .build();
 
-One pod per region is elected as leader automatically.
-
-```bash
-export JFR_SELECTION_STRATEGY="leader-election"
-```
-
-**Requires:** Kubernetes RBAC permissions for lease resources (see deployment example below).
-
-### 2. StatefulSet Pod-0
-
-Always use the first pod in a StatefulSet.
-
-```bash
-export JFR_SELECTION_STRATEGY="statefulset"
-```
-
-### 3. Explicit Flag
-
-Manually enable specific pods.
-
-```bash
-export JFR_SELECTION_STRATEGY="explicit"
-export JFR_COLLECTOR_ENABLED="true"
-```
-
-### 4. Name Pattern
-
-Select pods matching a regex pattern.
-
-```bash
-export JFR_SELECTION_STRATEGY="pattern"
-export JFR_COLLECTOR_POD_PATTERN=".*-collector.*"
-```
-
-## Source Code Bundling
-
-To include source code in your Docker image for better analysis:
-
-### Update pom.xml
-
-The provided `pom.xml` already includes source bundling configuration:
-
-```xml
-<build>
-    <resources>
-        <resource>
-            <directory>src/main/java</directory>
-            <targetPath>sources</targetPath>
-            <includes>
-                <include>**/*.java</include>
-            </includes>
-        </resource>
-    </resources>
-</build>
-```
-
-### Build Docker Image
-
-```dockerfile
-# See Dockerfile.example for full implementation
-FROM maven:3.9-eclipse-temurin-17 AS builder
-
-ARG GIT_COMMIT_SHA
-ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
-
-COPY pom.xml .
-COPY src ./src
-
-RUN mvn clean package -DskipTests
-
-FROM eclipse-temurin:17-jre
-COPY --from=builder /build/target/*.jar app.jar
-
-ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
-```
-
-Build with:
-```bash
-docker build --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) -t myapp:latest .
+// Run analysis every hour
+pipeline.runScheduled(Duration.ofHours(1).toMillis());
 ```
 
 ## Kubernetes Deployment
 
-Example deployment with leader election and downward API:
+### In-App Agent (Recommended)
+
+Add to your application's startup code:
+
+```java
+@PostConstruct
+public void initJvmAnalysis() {
+    JvmAnalysisPipeline pipeline = new JvmAnalysisPipeline.Builder()
+            .claudeApiKey(System.getenv("CLAUDE_API_KEY"))
+            .slackWebhook(System.getenv("SLACK_WEBHOOK_URL"))
+            .gcsBucket(System.getenv("JFR_BUCKET"))
+            .gcsProjectId(System.getenv("GCP_PROJECT"))
+            .packageWhitelist(Set.of("com.mycompany"))
+            .build();
+
+    // Run every 6 hours
+    pipeline.runScheduled(Duration.ofHours(6).toMillis());
+}
+```
+
+### Environment Variables
+
+Set these in your Kubernetes deployment:
 
 ```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: jfr-collector
-  namespace: production
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: jfr-leader-election
-  namespace: production
-rules:
-- apiGroups: ["coordination.k8s.io"]
-  resources: ["leases"]
-  verbs: ["get", "create", "update"]
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: jfr-leader-election
-  namespace: production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: jfr-leader-election
-subjects:
-- kind: ServiceAccount
-  name: jfr-collector
-  namespace: production
-
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: myapp
-  namespace: production
+  name: my-grpc-service
 spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: myapp
   template:
-    metadata:
-      labels:
-        app: myapp
     spec:
-      serviceAccountName: jfr-collector
       containers:
-      - name: myapp
-        image: myapp:latest
+      - name: app
+        image: my-app:latest
         env:
-        # Downward API - inject pod metadata
         - name: POD_NAME
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
-        - name: NODE_REGION
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.labels['topology.kubernetes.io/region']
-
-        # JFR Configuration
-        - name: JFR_SELECTION_STRATEGY
-          value: "leader-election"
-
-        # Claude AI
+        - name: REGION
+          value: "us-central1"
         - name: CLAUDE_API_KEY
           valueFrom:
             secretKeyRef:
-              name: claude-api-secret
+              name: claude-secret
               key: api-key
-
-        # GCS
-        - name: GCS_BUCKET
-          value: "my-jfr-dumps"
-        - name: GCP_PROJECT_ID
-          value: "my-project"
-
-        # Slack
         - name: SLACK_WEBHOOK_URL
           valueFrom:
             secretKeyRef:
-              name: slack-webhook-secret
-              key: url
-
-        # GitHub
-        - name: GITHUB_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: github-token-secret
-              key: token
-        - name: GITHUB_REPO
-          value: "myorg/myrepo"
+              name: slack-secret
+              key: webhook-url
+        - name: JFR_BUCKET
+          value: "my-jfr-dumps"
+        - name: GCP_PROJECT
+          value: "my-gcp-project"
 ```
 
-## Scheduled Analysis with CronJob
+## Configuration
 
-Run JFR analysis on a schedule:
+### Method Whitelisting
 
-```yaml
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: jfr-analysis
-  namespace: production
-spec:
-  schedule: "0 */6 * * *"  # Every 6 hours
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          serviceAccountName: jfr-collector
-          containers:
-          - name: analyzer
-            image: myapp:latest
-            command: ["java", "-jar", "app.jar", "--run-jfr-analysis"]
-            env:
-            # ... same env vars as deployment ...
-          restartPolicy: OnFailure
-```
-
-## Configuration Reference
-
-### JFR Configuration
+Focus analysis on your application code:
 
 ```java
-JvmAnalysisConfig.JfrConfig jfr = new JvmAnalysisConfig.JfrConfig();
-jfr.setDuration(Duration.ofMinutes(1));  // Recording duration
-jfr.setSettings("profile");              // "default" or "profile"
-jfr.setCompressOnUpload(true);           // GZIP compression
-jfr.setLocalStoragePath("/tmp/jfr-dumps");
+.packageWhitelist(Set.of(
+    "com.mycompany",
+    "com.myorg.payment",
+    "com.myorg.auth"
+))
 ```
 
-### Analysis Configuration
+### Method Blacklisting
+
+Exclude specific methods:
 
 ```java
-JvmAnalysisConfig.AnalysisConfig analysis = new JvmAnalysisConfig.AnalysisConfig();
-
-// Whitelist packages to analyze
-analysis.getPackageWhitelist().add("com.yourcompany");
-analysis.getPackageWhitelist().add("com.yourorg");
-
-// Blacklist specific packages
-analysis.getPackageBlacklist().add("com.yourcompany.internal");
-
-// Whitelist specific methods
-analysis.getMethodWhitelist().add("com.yourcompany.HotClass.criticalMethod");
-
-// Configure what to analyze
-analysis.setAnalyzeCpu(true);
-analysis.setAnalyzeMemory(true);
-analysis.setAnalyzeGc(true);
-analysis.setAnalyzeThreads(true);
-
-// Number of top items to include
-analysis.setTopHotMethodsCount(20);
-analysis.setTopAllocationSitesCount(20);
+JvmAnalysisConfig config = new JvmAnalysisConfig();
+config.getAnalysis().setMethodBlacklist(Set.of(
+    "com.mycompany.Logger.log",
+    "com.mycompany.Metrics.record"
+));
 ```
 
-### Claude Configuration
+### JFR Recording Settings
 
 ```java
-JvmAnalysisConfig.ClaudeConfig claude = new JvmAnalysisConfig.ClaudeConfig();
-claude.setApiKey("your-api-key");
-claude.setModel("claude-sonnet-4-5-20250929");
-claude.setMaxTokens(4096);
+.recordingDuration(Duration.ofMinutes(2))  // Recording length
 ```
 
-## Example Output
+JFR settings are in `src/main/resources/jfr-profile.jfc` (default: "profile" mode)
 
-The analysis generates comprehensive reports:
+## What Gets Analyzed?
 
-```markdown
-# JVM Performance Analysis Report
+The library extracts and Claude analyzes:
 
-**Region**: us-east1
-**Pod**: myapp-abc123
-**Recording Duration**: 60000 ms
+### CPU Profile
+- Top hot methods (CPU time)
+- Stack traces
+- Execution samples
 
-**CPU Samples**: 15234
-**Hot Methods Found**: 20
+### Memory Profile
+- Top allocation sites
+- Object types allocated
+- Total bytes allocated
 
-**Total Allocations**: 1523421 (1245.32 MB)
+### GC Profile
+- GC pause times
+- GC frequency
+- GC type
 
-**GC Collections**: 45
-**GC Pause Time**: 234 ms (longest: 12 ms)
+### Thread Profile
+- Thread contention
+- Deadlocks (if detected)
+- Blocked threads
 
----
+## Claude Analysis Output
 
+Claude provides:
+
+1. **Critical Issues** - Most important problems to fix
+2. **CPU Optimizations** - Specific hot method recommendations
+3. **Memory Optimizations** - Allocation reduction strategies
+4. **GC Tuning** - Heap size and GC algorithm recommendations
+5. **Thread Optimization** - Threading issue solutions
+6. **Estimated Impact** - Expected performance improvements
+
+## Advanced Usage
+
+### Analyze Existing JFR Files
+
+```java
+Path jfrFile = Paths.get("/tmp/my-recording.jfr");
+pipeline.analyzeExistingJfrAsync(jfrFile)
+        .thenAccept(report -> {
+            System.out.println("Analysis: " + report.getClaudeAnalysis());
+        });
+```
+
+### Record Without Analysis
+
+Save Claude API costs by just collecting and parsing data:
+
+```java
+pipeline.recordAndParseAsync()
+        .thenAccept(data -> {
+            System.out.println("CPU samples: " + data.getCpuProfile().getSampleCount());
+            System.out.println("Memory allocated: " +
+                    data.getMemoryProfile().getTotalBytesAllocated() / 1024 / 1024 + " MB");
+        });
+```
+
+### Parallel Analysis Across Pods
+
+Analyze multiple pods simultaneously:
+
+```java
+List<CompletableFuture<OptimizationReport>> futures = pods.stream()
+        .map(pod -> pod.getPipeline().executeAsync())
+        .collect(Collectors.toList());
+
+CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+        .thenRun(() -> {
+            System.out.println("All pods analyzed!");
+        });
+```
+
+## Slack Report Example
+
+```
+🔍 *JVM Performance Analysis Report*
+
+*Pod:* my-grpc-service-7d9f8b5c-4xk2p
+*Region:* us-central1-a
+*Timestamp:* 2025-12-15T10:30:00Z
+
+📊 *Recording Summary*
+• CPU Samples: 12,453
+• Hot Methods Identified: 20
+• Memory Allocated: 2,456 MB
+• Allocation Sites: 20
+• GC Collections: 45
+• Total GC Pause: 234 ms
+
+*JFR Dump:* `gs://my-jfr-dumps/jfr-dumps/my-pod/1702645800.jfr.gz`
+
+🤖 *AI Analysis & Recommendations*
+```
 ## Critical Issues
+1. High CPU usage in JSON serialization (23% of total CPU time)
+2. Excessive String allocations in request handling (1.2 GB allocated)
 
-1. **High CPU in JSON serialization**: `com.fasterxml.jackson.databind.ObjectMapper.writeValue`
-   consuming 23% CPU
-
-2. **Excessive String allocations**: 450 MB allocated in `StringBuilder.toString()` calls
-
-3. **GC pressure**: High allocation rate causing frequent young gen collections
-
-## CPU Optimization Recommendations
-
-### 1. Cache Jackson ObjectMapper instances (23% CPU reduction expected)
-Currently creating new ObjectMapper on every request. Use a singleton...
-
-[... more detailed recommendations ...]
+## CPU Optimizations
+- Cache serialization results for frequently accessed objects
+- Use StringBuilder for String concatenation in loops
+...
 ```
 
-## Architecture
+## Cost Optimization
 
+### Reduce Claude API Costs
+
+1. **Increase recording intervals** - Run hourly instead of every 15 minutes
+2. **Use whitelist aggressively** - Only analyze your code
+3. **Analyze only on thresholds** - Trigger when CPU > 80% or GC pauses > 100ms
+
+### Reduce GCS Costs
+
+- Enable compression (default: enabled)
+- Set lifecycle policies to delete old dumps
+- Store only in single region
+
+## Requirements
+
+- Java 17+
+- JDK Flight Recorder (included in OpenJDK 11+)
+- Google Cloud Storage bucket
+- Claude API key
+- Slack webhook URL (optional)
+
+## Building
+
+```bash
+mvn clean install
 ```
-┌─────────────────┐
-│  Pod Selection  │ ◄── Leader Election / StatefulSet / Explicit
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  JFR Recording  │ ◄── jdk.jfr.Recording API
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────┐
-│         Parallel Parsing                     │
-│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐       │
-│  │ CPU  │ │Memory│ │  GC  │ │Thread│       │
-│  └──────┘ └──────┘ └──────┘ └──────┘       │
-└────────┬─────────────────────────────────────┘
-         │
-         ├──► Upload to GCS (async)
-         │
-         ▼
-┌─────────────────┐
-│ Source Fetcher  │ ◄── Git API / Bundled / Decompile
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Claude AI      │ ◄── Async analysis with recommendations
-└────────┬────────┘
-         │
-         ├──► Upload Report to GCS (async)
-         │
-         ▼
-┌─────────────────┐
-│ Slack Notifier  │ ◄── Send formatted report
-└─────────────────┘
-```
-
-## Best Practices
-
-1. **Use leader election** in production to avoid redundant dumps
-2. **Whitelist your packages** to focus analysis on your code
-3. **Bundle sources** in Docker images for accurate recommendations
-4. **Schedule during low traffic** periods to minimize impact
-5. **Monitor GCS costs** - compress dumps and set retention policies
-6. **Set up Slack alerts** for critical performance issues
-
-## Troubleshooting
-
-### Leader election not working
-
-- Check RBAC permissions for `coordination.k8s.io/leases`
-- Verify POD_NAME and POD_NAMESPACE are set
-- Check logs for election events
-
-### Source code not found
-
-- Verify GIT_COMMIT_SHA is set during build
-- Check GITHUB_TOKEN has read permissions
-- Ensure GITHUB_REPO format is "owner/repo"
-
-### Claude API rate limits
-
-- Reduce analysis frequency
-- Use smaller `maxTokens` value
-- Consider caching results
 
 ## License
 
 MIT
 
-## Contributing
+## Support
 
-Pull requests welcome!
+For issues or questions, open an issue on GitHub.
