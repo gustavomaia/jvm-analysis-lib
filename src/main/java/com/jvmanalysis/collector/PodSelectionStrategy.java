@@ -7,36 +7,90 @@ import org.slf4j.LoggerFactory;
  * Strategy for determining if this pod should collect JFR dumps.
  * Useful for multi-region Kubernetes deployments where you want
  * only one pod per region to collect dumps.
+ *
+ * Configuration via environment variables:
+ * - JFR_SELECTION_STRATEGY: "leader-election", "statefulset", "explicit", "pattern" (default: "leader-election")
+ * - JFR_COLLECTOR_ENABLED: "true" to explicitly enable collection
+ * - JFR_COLLECTOR_POD_PATTERN: Regex pattern for pod name matching
  */
 public class PodSelectionStrategy {
 
     private static final Logger logger = LoggerFactory.getLogger(PodSelectionStrategy.class);
 
+    private final KubernetesLeaderElection leaderElection;
+    private final String strategy;
+
     /**
-     * Check if this pod should collect JFR dumps based on multiple strategies.
+     * Create pod selection strategy with optional leader election.
+     *
+     * @param leaderElection Leader election instance (can be null)
+     */
+    public PodSelectionStrategy(KubernetesLeaderElection leaderElection) {
+        this.leaderElection = leaderElection;
+        this.strategy = System.getenv().getOrDefault("JFR_SELECTION_STRATEGY", "leader-election");
+        logger.info("Pod selection strategy initialized: {}", strategy);
+    }
+
+    /**
+     * Create with default settings (auto-detect from environment).
+     */
+    public PodSelectionStrategy() {
+        this(null);
+    }
+
+    /**
+     * Check if this pod should collect JFR dumps based on configured strategy.
      *
      * @return true if this pod should collect
      */
     public boolean shouldCollect() {
-        // Strategy 1: Explicit environment flag
-        if (checkExplicitFlag()) {
-            logger.info("Pod selected for JFR collection via explicit flag");
-            return true;
-        }
+        switch (strategy.toLowerCase()) {
+            case "leader-election":
+                return checkLeaderElection();
 
-        // Strategy 2: StatefulSet pod-0 selection
-        if (checkStatefulSetPod0()) {
-            logger.info("Pod selected for JFR collection as StatefulSet pod-0");
-            return true;
-        }
+            case "statefulset":
+                if (checkStatefulSetPod0()) {
+                    logger.info("Pod selected for JFR collection as StatefulSet pod-0");
+                    return true;
+                }
+                break;
 
-        // Strategy 3: Deployment with specific pod name pattern
-        if (checkPodNamePattern()) {
-            logger.info("Pod selected for JFR collection via name pattern");
-            return true;
+            case "explicit":
+                if (checkExplicitFlag()) {
+                    logger.info("Pod selected for JFR collection via explicit flag");
+                    return true;
+                }
+                break;
+
+            case "pattern":
+                if (checkPodNamePattern()) {
+                    logger.info("Pod selected for JFR collection via name pattern");
+                    return true;
+                }
+                break;
+
+            default:
+                logger.warn("Unknown strategy: {}, falling back to leader-election", strategy);
+                return checkLeaderElection();
         }
 
         logger.info("Pod NOT selected for JFR collection");
+        return false;
+    }
+
+    /**
+     * Strategy 0: Kubernetes leader election (recommended for production).
+     * Only the elected leader pod collects dumps.
+     */
+    private boolean checkLeaderElection() {
+        if (leaderElection != null && leaderElection.isLeader()) {
+            logger.info("Pod selected for JFR collection as LEADER");
+            return true;
+        } else if (leaderElection == null) {
+            logger.warn("Leader election not initialized, falling back to other strategies");
+            // Fallback to other strategies if leader election isn't available
+            return checkExplicitFlag() || checkStatefulSetPod0() || checkPodNamePattern();
+        }
         return false;
     }
 

@@ -1,0 +1,254 @@
+---
+# Service Account for pods running JFR analysis
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jfr-collector
+  namespace: production
+
+---
+# Role for leader election using Kubernetes leases
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jfr-leader-election
+  namespace: production
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "create", "update", "patch"]
+
+---
+# Bind the role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jfr-leader-election
+  namespace: production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jfr-leader-election
+subjects:
+- kind: ServiceAccount
+  name: jfr-collector
+  namespace: production
+
+---
+# Secret for Claude API key
+apiVersion: v1
+kind: Secret
+metadata:
+  name: claude-api-secret
+  namespace: production
+type: Opaque
+stringData:
+  api-key: "your-claude-api-key-here"
+
+---
+# Secret for Slack webhook
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-webhook-secret
+  namespace: production
+type: Opaque
+stringData:
+  url: "https://hooks.slack.com/services/YOUR/WEBHOOK"
+
+---
+# Secret for GitHub token
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-token-secret
+  namespace: production
+type: Opaque
+stringData:
+  token: "ghp_your_github_token"
+
+---
+# Deployment with JFR analysis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: production
+  labels:
+    app: myapp
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+        region: us-east1  # Set per region
+    spec:
+      serviceAccountName: jfr-collector
+      containers:
+      - name: myapp
+        image: gcr.io/your-project/myapp:latest
+        imagePullPolicy: Always
+
+        # JVM flags for JFR
+        env:
+        - name: JAVA_OPTS
+          value: "-XX:+FlightRecorder -XX:FlightRecorderOptions=stackdepth=256"
+
+        # Kubernetes downward API - pod metadata
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NODE_REGION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['topology.kubernetes.io/region']
+        - name: REGION
+          value: "us-east1"  # Or use node label
+
+        # JFR Selection Strategy
+        - name: JFR_SELECTION_STRATEGY
+          value: "leader-election"  # leader-election, statefulset, explicit, pattern
+
+        # Claude AI Configuration
+        - name: CLAUDE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: claude-api-secret
+              key: api-key
+
+        # Google Cloud Storage
+        - name: GCS_BUCKET
+          value: "my-jfr-dumps-bucket"
+        - name: GCP_PROJECT_ID
+          value: "my-gcp-project"
+
+        # Slack Configuration
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: slack-webhook-secret
+              key: url
+
+        # GitHub Configuration (for source code fetching)
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-token-secret
+              key: token
+        - name: GITHUB_REPO
+          value: "yourorg/yourrepo"
+
+        # GCP Service Account (for GCS access)
+        # Option 1: Workload Identity (recommended)
+        # Option 2: Service account key file
+        # - name: GOOGLE_APPLICATION_CREDENTIALS
+        #   value: "/var/secrets/google/key.json"
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+
+        # Volume mounts for GCP credentials (if using key file)
+        # volumeMounts:
+        # - name: gcp-credentials
+        #   mountPath: /var/secrets/google
+        #   readOnly: true
+
+      # Volumes for GCP credentials (if using key file)
+      # volumes:
+      # - name: gcp-credentials
+      #   secret:
+      #     secretName: gcp-credentials-secret
+
+---
+# Optional: CronJob for scheduled analysis
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jfr-analysis-cron
+  namespace: production
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: jfr-analysis
+        spec:
+          serviceAccountName: jfr-collector
+          restartPolicy: OnFailure
+          containers:
+          - name: analyzer
+            image: gcr.io/your-project/myapp:latest
+            command: ["java"]
+            args:
+            - "-jar"
+            - "app.jar"
+            - "--run-jfr-analysis"  # Your app's flag to trigger analysis
+
+            # Same env vars as deployment
+            env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: REGION
+              value: "us-east1"
+            - name: JFR_SELECTION_STRATEGY
+              value: "explicit"
+            - name: JFR_COLLECTOR_ENABLED
+              value: "true"
+            - name: CLAUDE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: claude-api-secret
+                  key: api-key
+            - name: GCS_BUCKET
+              value: "my-jfr-dumps-bucket"
+            - name: GCP_PROJECT_ID
+              value: "my-gcp-project"
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slack-webhook-secret
+                  key: url
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token-secret
+                  key: token
+            - name: GITHUB_REPO
+              value: "yourorg/yourrepo"
+
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "1000m"
+              limits:
+                memory: "2Gi"
+                cpu: "2000m"

@@ -1,0 +1,44 @@
+# Multi-stage Docker build for JVM application with bundled sources
+# This example shows how to include source code in your Docker image for JFR analysis
+
+FROM maven:3.9-eclipse-temurin-17 AS builder
+
+WORKDIR /build
+
+# Copy your application source
+COPY pom.xml .
+COPY src ./src
+
+# Build argument for Git commit SHA
+ARG GIT_COMMIT_SHA
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
+# Build with Maven - sources will be bundled in the JAR
+# due to the <resources> configuration in pom.xml
+RUN mvn clean package -DskipTests
+
+# Runtime stage
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+# Copy built JAR (includes bundled sources)
+COPY --from=builder /build/target/*.jar app.jar
+
+# Set environment variables
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+ENV JAVA_OPTS="-XX:+FlightRecorder \
+               -XX:StartFlightRecording=settings=profile,dumponexit=false \
+               -XX:FlightRecorderOptions=stackdepth=256"
+
+# Recommended: Add Kubernetes downward API environment variables in deployment.yaml:
+# - POD_NAME
+# - POD_NAMESPACE
+# - NODE_REGION (from node labels)
+# - REGION
+
+# Create directory for JFR dumps
+RUN mkdir -p /tmp/jfr-dumps
+
+# Run application
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

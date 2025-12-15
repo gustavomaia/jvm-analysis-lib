@@ -1,0 +1,46 @@
+# JVM Analysis Library Configuration Example
+# Copy to application.properties and customize
+
+# Claude AI Configuration
+claude.api.key=${CLAUDE_API_KEY}
+claude.model=claude-sonnet-4-5-20250929
+claude.max.tokens=4096
+
+# Google Cloud Storage
+gcs.bucket=${GCS_BUCKET}
+gcs.project.id=${GCP_PROJECT_ID}
+gcs.enabled=true
+gcs.compress.on.upload=true
+
+# Slack Notifications
+slack.webhook.url=${SLACK_WEBHOOK_URL}
+slack.enabled=true
+
+# JFR Recording
+jfr.duration.minutes=1
+jfr.settings=profile
+jfr.local.storage.path=/tmp/jfr-dumps
+
+# Analysis Configuration
+analysis.cpu.enabled=true
+analysis.memory.enabled=true
+analysis.gc.enabled=true
+analysis.threads.enabled=true
+analysis.top.hot.methods=20
+analysis.top.allocation.sites=20
+
+# Package Whitelists (comma-separated)
+analysis.package.whitelist=com.yourcompany,com.yourorg
+
+# Package Blacklists
+analysis.package.blacklist=com.yourcompany.internal
+
+# Method Whitelists (comma-separated, fully qualified)
+analysis.method.whitelist=
+
+# GitHub Source Code Fetching
+github.token=${GITHUB_TOKEN}
+github.repo=${GITHUB_REPO}
+
+# Pod Selection
+jfr.selection.strategy=${JFR_SELECTION_STRATEGY:leader-election}
