@@ -153,6 +153,13 @@ public class GcsStorage {
     }
 
     /**
+     * Get the underlying Storage instance for snapshot store.
+     */
+    public Storage getStorage() {
+        return storage;
+    }
+
+    /**
      * Shutdown executor service.
      */
     public void shutdown() {

@@ -3,11 +3,16 @@ package com.jvmanalysis;
 import com.jvmanalysis.ai.ClaudeApiClient;
 import com.jvmanalysis.ai.JvmOptimizationAnalyzer;
 import com.jvmanalysis.collector.JfrCollector;
+import com.jvmanalysis.comparison.ComparisonResult;
+import com.jvmanalysis.comparison.SnapshotComparator;
 import com.jvmanalysis.config.JvmAnalysisConfig;
+import com.jvmanalysis.model.AnalysisSnapshot;
 import com.jvmanalysis.model.JfrAnalysisData;
 import com.jvmanalysis.model.OptimizationReport;
+import com.jvmanalysis.notification.InteractiveSlackNotifier;
 import com.jvmanalysis.notification.SlackNotifier;
 import com.jvmanalysis.parser.AsyncJfrParser;
+import com.jvmanalysis.storage.GcsSnapshotStore;
 import com.jvmanalysis.storage.GcsStorage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,11 +20,20 @@ import org.slf4j.LoggerFactory;
 import java.net.InetAddress;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * Main orchestrator that ties together the entire async pipeline:
- * Record JFR → Upload to GCS → Parse → Analyze with Claude → Notify Slack
+ * Record JFR → Upload to GCS → Parse → Compare with Previous → Analyze with Claude → Notify Slack
+ *
+ * New features:
+ * - Historical snapshot storage
+ * - Automatic comparison with previous run
+ * - Risk detection (regressions)
+ * - Opportunity detection (improvements >= 10%)
+ * - Actionable suggestions with complexity/gain analysis
+ * - Interactive Slack messages
  */
 public class JvmAnalysisPipeline {
 
@@ -32,6 +46,9 @@ public class JvmAnalysisPipeline {
     private final ClaudeApiClient claudeClient;
     private final JvmOptimizationAnalyzer analyzer;
     private final SlackNotifier slackNotifier;
+    private final GcsSnapshotStore snapshotStore;
+    private final SnapshotComparator comparator;
+    private final InteractiveSlackNotifier interactiveNotifier;
 
     public JvmAnalysisPipeline(JvmAnalysisConfig config) throws Exception {
         this.config = config;
@@ -42,12 +59,87 @@ public class JvmAnalysisPipeline {
         this.analyzer = new JvmOptimizationAnalyzer(config, claudeClient);
         this.slackNotifier = new SlackNotifier(config.getSlack());
 
-        logger.info("JVM Analysis Pipeline initialized");
+        // New comparison features
+        this.snapshotStore = new GcsSnapshotStore(gcsStorage.getStorage(), config.getGcs().getBucketName());
+        this.comparator = new SnapshotComparator();
+        this.interactiveNotifier = new InteractiveSlackNotifier(config.getSlack());
+
+        logger.info("JVM Analysis Pipeline initialized with comparison features");
     }
 
     /**
-     * Execute the full analysis pipeline asynchronously.
-     * This is the main entry point for automated analysis.
+     * Execute the full analysis pipeline with historical comparison (RECOMMENDED).
+     * This method:
+     * 1. Records JFR dump
+     * 2. Parses and creates snapshot
+     * 3. Compares with previous snapshot
+     * 4. Detects risks (regressions) and opportunities (improvements >= 10%)
+     * 5. Generates actionable suggestions with complexity/gain analysis
+     * 6. Sends interactive Slack report
+     * 7. Stores snapshot for next comparison
+     *
+     * @return CompletableFuture with comparison result
+     */
+    public CompletableFuture<ComparisonResult> executeWithComparisonAsync() {
+        logger.info("Starting async JVM analysis pipeline with comparison");
+
+        String podName = getPodName();
+        String region = getRegion();
+
+        return recordJfrAsync()
+                .thenCompose(this::uploadToGcsAsync)
+                .thenCompose(this::parseJfrAsync)
+                .thenCompose(data -> {
+                    // Create snapshot from parsed data
+                    AnalysisSnapshot currentSnapshot = AnalysisSnapshot.fromJfrData(data);
+                    currentSnapshot.setPodName(podName);
+                    currentSnapshot.setRegion(region);
+
+                    // Get previous snapshot for comparison
+                    return snapshotStore.getLatestAsync(podName, region)
+                            .thenCompose(previousOpt -> {
+                                // Compare if previous exists
+                                CompletableFuture<ComparisonResult> comparisonFuture;
+
+                                if (previousOpt.isPresent()) {
+                                    logger.info("Comparing with previous snapshot from {}",
+                                            previousOpt.get().getTimestamp());
+                                    comparisonFuture = comparator.compareAsync(currentSnapshot, previousOpt.get());
+                                } else {
+                                    logger.info("No previous snapshot found - this is the first run");
+                                    // No comparison for first run
+                                    ComparisonResult result = new ComparisonResult();
+                                    result.setCurrent(currentSnapshot);
+                                    comparisonFuture = CompletableFuture.completedFuture(result);
+                                }
+
+                                // Store current snapshot for next time
+                                return comparisonFuture.thenCompose(result ->
+                                        snapshotStore.saveAsync(currentSnapshot)
+                                                .thenApply(v -> result)
+                                );
+                            });
+                })
+                .thenCompose(result -> {
+                    // Send interactive Slack notification
+                    return interactiveNotifier.sendComparisonAsync(result, podName, region)
+                            .thenApply(v -> result);
+                })
+                .whenComplete((result, error) -> {
+                    if (error != null) {
+                        logger.error("Pipeline with comparison failed", error);
+                    } else {
+                        logger.info("Pipeline completed: {} risks, {} opportunities, {} suggestions",
+                                result.getRisks().size(),
+                                result.getOpportunities().size(),
+                                result.getSuggestions().size());
+                    }
+                });
+    }
+
+    /**
+     * Execute the full analysis pipeline asynchronously (without comparison).
+     * Use this for one-off analysis or when you don't need historical tracking.
      *
      * @return CompletableFuture with the optimization report
      */
